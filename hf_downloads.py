@@ -14,7 +14,7 @@ API_BASE = "https://huggingface.co/api"
 
 def get_downloads(repo_id: str, repo_type: str = "model") -> dict:
     """Fetch download stats for a HF repo."""
-    expand = "?expand[]=downloadsAllTime"
+    expand = "?expand[]=downloadsAllTime&expand[]=downloads&expand[]=likes"
     if repo_type == "model":
         url = f"{API_BASE}/models/{repo_id}{expand}"
     elif repo_type == "dataset":
@@ -142,8 +142,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s check meta-llama/Llama-2-7b
-  %(prog)s check meta-llama/Llama-2-7b --all-time
+  %(prog)s check meta-llama/Llama-2-7b-hf
+  %(prog)s check meta-llama/Llama-2-7b-hf --all-time
   %(prog)s check squad --type dataset
   %(prog)s list meta-llama
   %(prog)s list meta-llama --all-time
