@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HF Download History</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Reenie+Beanie&display=swap" rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #fff;
+        }
+        h1 {
+            font-family: 'Reenie Beanie', cursive;
+            font-size: 2.5rem;
+            text-align: center;
+            margin: 10px 0 20px;
+        }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+        .file-input {
+            flex: 1;
+            min-width: 200px;
+        }
+        .file-input input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .options {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .options label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+        }
+        .metric-select {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .selected-repos {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 15px;
+            min-height: 36px;
+        }
+        .repo-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 10px;
+            border: 1px solid #333;
+            border-radius: 4px;
+            background: #fff;
+            font-size: 14px;
+        }
+        .repo-tag .color-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+        .repo-tag button {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            padding: 0;
+            margin-left: 5px;
+        }
+        .clear-all {
+            color: #666;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .clear-all:hover {
+            color: #000;
+        }
+        .repo-selector {
+            margin-bottom: 20px;
+        }
+        .repo-selector {
+            position: relative;
+        }
+        .repo-selector input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .repo-selector input:focus {
+            border-radius: 4px 4px 0 0;
+        }
+        .repo-selector select {
+            display: none;
+            width: 100%;
+            padding: 0;
+            border: 1px solid #ddd;
+            border-top: none;
+            border-radius: 0 0 4px 4px;
+            font-size: 14px;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: #fff;
+            z-index: 100;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+        .repo-selector select.open {
+            display: block;
+        }
+        .repo-selector select option {
+            padding: 8px 10px;
+            cursor: pointer;
+        }
+        .repo-selector select option:hover {
+            background: #f0f0f0;
+        }
+        .chart-container {
+            position: relative;
+            height: 500px;
+            margin-top: 20px;
+        }
+        .instructions {
+            text-align: center;
+            color: #888;
+            padding: 50px;
+        }
+    </style>
+</head>
+<body>
+    <h1>HF Download History</h1>
+
+    <div class="controls">
+        <div class="file-input">
+            <input type="file" id="fileInput" accept=".jsonl,.json">
+        </div>
+        <div class="options">
+            <select id="metricSelect" class="metric-select">
+                <option value="downloads_30d">Downloads (30d)</option>
+                <option value="downloads_all_time">Downloads (all time)</option>
+                <option value="likes">Likes</option>
+            </select>
+            <label>
+                <input type="checkbox" id="logScale"> Log scale
+            </label>
+            <label>
+                <input type="checkbox" id="alignTimeline"> Align timeline
+            </label>
+        </div>
+    </div>
+
+    <div class="selected-repos" id="selectedRepos"></div>
+
+    <div class="repo-selector">
+        <input type="text" id="repoSearch" placeholder="Type to filter repos..." disabled>
+        <select id="repoSelect" size="10" disabled>
+        </select>
+    </div>
+
+    <div class="chart-container">
+        <canvas id="chart"></canvas>
+        <div class="instructions" id="instructions">
+            Load a JSONL file to view download history
+        </div>
+    </div>
+
+    <script>
+        const COLORS = [
+            '#c0392b', '#2980b9', '#27ae60', '#8e44ad', '#d35400',
+            '#16a085', '#c0392b', '#7f8c8d', '#f39c12', '#1abc9c'
+        ];
+
+        let allData = [];
+        let repos = [];
+        let selectedRepos = [];
+        let chart = null;
+
+        const fileInput = document.getElementById('fileInput');
+        const repoSelect = document.getElementById('repoSelect');
+        const repoSearch = document.getElementById('repoSearch');
+        const selectedReposDiv = document.getElementById('selectedRepos');
+        const metricSelect = document.getElementById('metricSelect');
+        const logScaleCheckbox = document.getElementById('logScale');
+        const alignTimelineCheckbox = document.getElementById('alignTimeline');
+        const instructions = document.getElementById('instructions');
+        const ctx = document.getElementById('chart').getContext('2d');
+
+        let repoMaxDownloads = {};
+
+        fileInput.addEventListener('change', handleFileLoad);
+        repoSelect.addEventListener('change', handleRepoSelect);
+        repoSearch.addEventListener('input', handleRepoSearch);
+        repoSearch.addEventListener('focus', () => repoSelect.classList.add('open'));
+        repoSearch.addEventListener('blur', () => {
+            // Delay to allow click on option
+            setTimeout(() => repoSelect.classList.remove('open'), 150);
+        });
+        metricSelect.addEventListener('change', updateChart);
+        logScaleCheckbox.addEventListener('change', updateChart);
+        alignTimelineCheckbox.addEventListener('change', updateChart);
+
+        function handleFileLoad(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const lines = event.target.result.trim().split('\n');
+                allData = lines.map(line => JSON.parse(line));
+
+                // Get unique repos sorted by max downloads
+                repoMaxDownloads = {};
+                allData.forEach(d => {
+                    const key = d.repo;
+                    const val = d.downloads_all_time || 0;
+                    if (!repoMaxDownloads[key] || val > repoMaxDownloads[key]) {
+                        repoMaxDownloads[key] = val;
+                    }
+                });
+
+                repos = Object.keys(repoMaxDownloads).sort((a, b) =>
+                    repoMaxDownloads[b] - repoMaxDownloads[a]
+                );
+
+                // Populate dropdown
+                populateRepoDropdown('');
+                repoSelect.disabled = false;
+                repoSearch.disabled = false;
+
+                // Auto-select llamafile_0.10.0_alpha if present
+                const defaultRepo = repos.find(r => r.includes('llamafile_0.10.0_alpha'));
+                selectedRepos = defaultRepo ? [defaultRepo] : [];
+                updateSelectedReposUI();
+                updateChart();
+
+                instructions.style.display = 'none';
+            };
+            reader.readAsText(file);
+        }
+
+        function populateRepoDropdown(filter) {
+            const lowerFilter = filter.toLowerCase();
+            const filtered = repos.filter(r =>
+                r.toLowerCase().includes(lowerFilter) && !selectedRepos.includes(r)
+            );
+
+            repoSelect.innerHTML = '';
+            filtered.forEach(repo => {
+                const opt = document.createElement('option');
+                opt.value = repo;
+                opt.textContent = `${repo} (${formatNumber(repoMaxDownloads[repo])})`;
+                repoSelect.appendChild(opt);
+            });
+        }
+
+        function handleRepoSearch(e) {
+            populateRepoDropdown(e.target.value);
+        }
+
+        function handleRepoSelect(e) {
+            const repo = e.target.value;
+            if (repo && !selectedRepos.includes(repo)) {
+                selectedRepos.push(repo);
+                updateSelectedReposUI();
+                updateChart();
+            }
+            repoSelect.value = '';
+            repoSearch.value = '';
+            populateRepoDropdown('');
+        }
+
+        function removeRepo(repo) {
+            selectedRepos = selectedRepos.filter(r => r !== repo);
+            updateSelectedReposUI();
+            updateChart();
+        }
+
+        function clearAll() {
+            selectedRepos = [];
+            updateSelectedReposUI();
+            updateChart();
+        }
+
+        function updateSelectedReposUI() {
+            selectedReposDiv.innerHTML = '';
+            selectedRepos.forEach((repo, i) => {
+                const tag = document.createElement('span');
+                tag.className = 'repo-tag';
+                tag.innerHTML = `
+                    <span class="color-dot" style="background: ${COLORS[i % COLORS.length]}"></span>
+                    ${repo.split('/').pop()}
+                    <button onclick="removeRepo('${repo}')">&times;</button>
+                `;
+                selectedReposDiv.appendChild(tag);
+            });
+
+            if (selectedRepos.length > 0) {
+                const clearBtn = document.createElement('span');
+                clearBtn.className = 'clear-all';
+                clearBtn.textContent = 'Clear all';
+                clearBtn.onclick = clearAll;
+                selectedReposDiv.appendChild(clearBtn);
+            }
+        }
+
+        function formatNumber(n) {
+            if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+            if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+            return n.toString();
+        }
+
+        function updateChart() {
+            const metric = metricSelect.value;
+            const useLogScale = logScaleCheckbox.checked;
+            const alignTimeline = alignTimelineCheckbox.checked;
+
+            if (selectedRepos.length === 0) {
+                if (chart) {
+                    chart.destroy();
+                    chart = null;
+                }
+                return;
+            }
+
+            const datasets = selectedRepos.map((repo, i) => {
+                const repoData = allData
+                    .filter(d => d.repo === repo)
+                    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                let data;
+                if (alignTimeline) {
+                    // Use day index instead of actual date
+                    data = repoData.map((d, idx) => ({
+                        x: idx,
+                        y: d[metric] || 0
+                    }));
+                } else {
+                    data = repoData.map(d => ({
+                        x: new Date(d.timestamp),
+                        y: d[metric] || 0
+                    }));
+                }
+
+                return {
+                    label: repo.split('/').pop(),
+                    data: data,
+                    borderColor: COLORS[i % COLORS.length],
+                    backgroundColor: COLORS[i % COLORS.length],
+                    tension: 0.3,
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                    borderWidth: 2
+                };
+            });
+
+            const config = {
+                type: 'line',
+                data: { datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    scales: {
+                        x: alignTimeline ? {
+                            type: 'linear',
+                            title: {
+                                display: true,
+                                text: 'Days'
+                            }
+                        } : {
+                            type: 'time',
+                            time: {
+                                unit: 'day',
+                                displayFormats: {
+                                    day: 'MMM d'
+                                }
+                            },
+                            title: {
+                                display: true,
+                                text: 'Date'
+                            }
+                        },
+                        y: {
+                            type: useLogScale ? 'logarithmic' : 'linear',
+                            title: {
+                                display: true,
+                                text: metricSelect.options[metricSelect.selectedIndex].text
+                            },
+                            ticks: {
+                                callback: (value) => formatNumber(value)
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                usePointStyle: true,
+                                pointStyle: 'rect'
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: (ctx) => `${ctx.dataset.label}: ${formatNumber(ctx.parsed.y)}`
+                            }
+                        }
+                    }
+                }
+            };
+
+            if (chart) {
+                chart.destroy();
+            }
+            chart = new Chart(ctx, config);
+        }
+    </script>
+</body>
+</html>
