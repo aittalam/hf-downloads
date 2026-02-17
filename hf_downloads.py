@@ -154,10 +154,22 @@ Examples:
   %(prog)s list user --json >> ~/hf-downloads.jsonl
         """,
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")
 
     # check command
-    p_check = sub.add_parser("check", help="Check downloads for a single repo")
+    p_check = sub.add_parser(
+        "check",
+        help="Check downloads for a single repo",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s username/repo-name
+  %(prog)s username/repo-name --all-time
+  %(prog)s username/my-dataset --type dataset
+  %(prog)s username/my-space --type space
+  %(prog)s username/repo-name --json >> ~/hf-downloads.jsonl
+        """,
+    )
     p_check.add_argument("repo", help="Repo ID (e.g. username/repo-name)")
     p_check.add_argument(
         "--all-time", "-a",
@@ -178,7 +190,18 @@ Examples:
     p_check.set_defaults(func=cmd_check)
 
     # list command
-    p_list = sub.add_parser("list", help="List all repos for a user/org with downloads")
+    p_list = sub.add_parser(
+        "list",
+        help="List all repos for a user/org with downloads",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s username
+  %(prog)s username --all-time
+  %(prog)s username --type dataset
+  %(prog)s username --json >> ~/hf-downloads.jsonl
+        """,
+    )
     p_list.add_argument("username", help="HF username or organization")
     p_list.add_argument(
         "--all-time", "-a",
@@ -199,6 +222,9 @@ Examples:
     p_list.set_defaults(func=cmd_list)
 
     args = parser.parse_args()
+    if args.command is None:
+        parser.print_help()
+        sys.exit(0)
     args.func(args)
 
 

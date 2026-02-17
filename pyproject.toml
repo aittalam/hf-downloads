@@ -1,0 +1,13 @@
+[project]
+name = "hf-downloads"
+version = "0.1.0"
+description = "CLI tool to check download counts for Hugging Face repos"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+hf-downloads = "hf_downloads:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
