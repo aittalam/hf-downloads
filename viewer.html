@@ -250,8 +250,8 @@
                 repoSelect.disabled = false;
                 repoSearch.disabled = false;
 
-                // Auto-select llamafile_0.10.0_alpha if present
-                const defaultRepo = repos.find(r => r.includes('llamafile_0.10.0_alpha'));
+                // Auto-select llamafile_0.10.0 if present
+                const defaultRepo = repos.find(r => r.includes('llamafile_0.10.0'));
                 selectedRepos = defaultRepo ? [defaultRepo] : [];
                 updateSelectedReposUI();
                 updateChart();
