@@ -160,7 +160,8 @@
         <div class="options">
             <select id="metricSelect" class="metric-select">
                 <option value="downloads_30d">Downloads (30d)</option>
-                <option value="downloads_all_time">Downloads (all time)</option>
+                <option value="downloads_all_time">Downloads (all time, cumulative)</option>
+                <option value="downloads_daily">Downloads (daily, from all-time diffs)</option>
                 <option value="likes">Likes</option>
             </select>
             <label>
@@ -222,44 +223,58 @@
         logScaleCheckbox.addEventListener('change', updateChart);
         alignTimelineCheckbox.addEventListener('change', updateChart);
 
+        const DEFAULT_REPOS = [
+            'mozilla-ai/llamafile_0.10.0',
+            'mozilla-ai/llamafile_0.10',
+            'mozilla-ai/llamafile_0.10_alpha'
+        ];
+
+        function loadData(text) {
+            const lines = text.trim().split('\n');
+            allData = lines.map(line => JSON.parse(line));
+
+            // Get unique repos sorted by max downloads
+            repoMaxDownloads = {};
+            allData.forEach(d => {
+                const key = d.repo;
+                const val = d.downloads_all_time || 0;
+                if (!repoMaxDownloads[key] || val > repoMaxDownloads[key]) {
+                    repoMaxDownloads[key] = val;
+                }
+            });
+
+            repos = Object.keys(repoMaxDownloads).sort((a, b) =>
+                repoMaxDownloads[b] - repoMaxDownloads[a]
+            );
+
+            // Populate dropdown
+            populateRepoDropdown('');
+            repoSelect.disabled = false;
+            repoSearch.disabled = false;
+
+            // Auto-select default repos that are present in the data
+            selectedRepos = DEFAULT_REPOS.filter(r => repos.includes(r));
+            updateSelectedReposUI();
+            updateChart();
+
+            instructions.style.display = 'none';
+        }
+
         function handleFileLoad(e) {
             const file = e.target.files[0];
             if (!file) return;
 
             const reader = new FileReader();
-            reader.onload = (event) => {
-                const lines = event.target.result.trim().split('\n');
-                allData = lines.map(line => JSON.parse(line));
-
-                // Get unique repos sorted by max downloads
-                repoMaxDownloads = {};
-                allData.forEach(d => {
-                    const key = d.repo;
-                    const val = d.downloads_all_time || 0;
-                    if (!repoMaxDownloads[key] || val > repoMaxDownloads[key]) {
-                        repoMaxDownloads[key] = val;
-                    }
-                });
-
-                repos = Object.keys(repoMaxDownloads).sort((a, b) =>
-                    repoMaxDownloads[b] - repoMaxDownloads[a]
-                );
-
-                // Populate dropdown
-                populateRepoDropdown('');
-                repoSelect.disabled = false;
-                repoSearch.disabled = false;
-
-                // Auto-select llamafile_0.10.0 if present
-                const defaultRepo = repos.find(r => r.includes('llamafile_0.10.0'));
-                selectedRepos = defaultRepo ? [defaultRepo] : [];
-                updateSelectedReposUI();
-                updateChart();
-
-                instructions.style.display = 'none';
-            };
+            reader.onload = (event) => loadData(event.target.result);
             reader.readAsText(file);
         }
+
+        // Try to auto-load ./hf-downloads.jsonl from the current directory.
+        // Only works when the page is served over http(s); silently fails on file://.
+        fetch('./hf-downloads.jsonl')
+            .then(r => r.ok ? r.text() : null)
+            .then(text => { if (text) loadData(text); })
+            .catch(() => {});
 
         function populateRepoDropdown(filter) {
             const lowerFilter = filter.toLowerCase();
@@ -345,46 +360,50 @@
                 return;
             }
 
+            const isBar = metric === 'downloads_30d' || metric === 'downloads_daily';
+
             const datasets = selectedRepos.map((repo, i) => {
                 const repoData = allData
                     .filter(d => d.repo === repo)
                     .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-                let data;
-                if (alignTimeline) {
-                    // Use day index instead of actual date
-                    data = repoData.map((d, idx) => ({
-                        x: idx,
-                        y: d[metric] || 0
-                    }));
+                let values;
+                if (metric === 'downloads_daily') {
+                    // Day-over-day diffs of cumulative all-time downloads.
+                    // First entry has no predecessor → null (skipped below).
+                    values = repoData.map((d, idx) => idx === 0
+                        ? null
+                        : (d.downloads_all_time || 0) - (repoData[idx - 1].downloads_all_time || 0));
                 } else {
-                    data = repoData.map(d => ({
-                        x: new Date(d.timestamp),
-                        y: d[metric] || 0
-                    }));
+                    values = repoData.map(d => d[metric] || 0);
                 }
 
-                return {
+                let data = repoData.map((d, idx) => ({
+                    x: alignTimeline ? idx : new Date(d.timestamp),
+                    y: values[idx]
+                }));
+                if (metric === 'downloads_daily') data = data.slice(1);
+
+                const styleBase = {
                     label: repo.split('/').pop(),
                     data: data,
                     borderColor: COLORS[i % COLORS.length],
-                    backgroundColor: COLORS[i % COLORS.length],
-                    tension: 0.3,
-                    pointRadius: 4,
-                    pointHoverRadius: 6,
-                    borderWidth: 2
+                    backgroundColor: COLORS[i % COLORS.length]
                 };
+                return isBar
+                    ? { ...styleBase, borderWidth: 1 }
+                    : { ...styleBase, tension: 0.3, pointRadius: 4, pointHoverRadius: 6, borderWidth: 2 };
             });
 
             const config = {
-                type: 'line',
+                type: isBar ? 'bar' : 'line',
                 data: { datasets },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     interaction: {
                         intersect: false,
-                        mode: 'index'
+                        mode: 'x'
                     },
                     scales: {
                         x: alignTimeline ? {
