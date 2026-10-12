@@ -145,6 +145,56 @@
     return row[m.field];
   }
 
+  /* Log scale without the zero hole.
+   * A `type: 'log'` axis cannot draw value 0 or negatives at all: log(0) is
+   * -Infinity and log(-140) is NaN, so ECharts' projection returns y=Infinity
+   * and y=NaN for those points (measured against echarts 5.6.0). Clipping the
+   * bad values to 0 does not help - 0 is precisely the un-drawable case. So log
+   * mode plots a signed log (log1p): sign(v) * log10(1 + |v|). Zero lands on the
+   * zero line, negatives point down, magnitudes are still compressed, and
+   * integer slots in this space are decades. signedExp is its exact inverse.
+   */
+  function signedLog(v) {
+    v = Number(v);
+    return isFinite(v) ? Math.sign(v) * Math.log10(1 + Math.abs(v)) : null;
+  }
+  function signedExp(x) {
+    x = Number(x);
+    return isFinite(x) ? Math.sign(x) * (Math.pow(10, Math.abs(x)) - 1) : null;
+  }
+  /* Ticks land on decade-minus-one values (9, 99, 999...) because log1p decades
+   * sit at 10^k - 1, so label each one with the decade it is within 0.1% of.
+   */
+  function snapDecade(v) {
+    var a = Math.abs(v);
+    if (!a) return 0;
+    var d = Math.pow(10, Math.round(Math.log10(a)));
+    return v < 0 ? -d : d;
+  }
+  function fmtLogTick(x) { return fmtNumber(snapDecade(signedExp(x))); }
+
+  /* min/max of the main series values *inside the window* (raw, pre-transform).
+   * filterMode:'filter' drops out-of-window points, so the axis should fit the
+   * window rather than the whole file.
+   */
+  function visibleYRange(state) {
+    var lo = Infinity, hi = -Infinity, win = state.win || state.domain;
+    for (var i = 0; i < state.selected.length; i++) {
+      var bucket = state.meta.byRepo[state.selected[i]];
+      if (!bucket) continue;
+      for (var j = 0; j < bucket.rows.length; j++) {
+        if (j === 0 && METRICS[state.metric].kind === 'daily') continue;
+        var x = xOf(bucket.rows[j], state.mode);
+        if (x < win.start || x > win.end) continue;
+        var y = yOf(bucket.rows[j], j > 0 ? bucket.rows[j - 1] : null, state.metric);
+        if (y === null || !isFinite(y)) continue;
+        if (y < lo) lo = y;
+        if (y > hi) hi = y;
+      }
+    }
+    return isFinite(lo) ? { min: lo, max: hi } : { min: 0, max: 1 };
+  }
+
   function mainSeries(state) {
     var out = [];
     var m = METRICS[state.metric];
@@ -159,7 +209,8 @@
         var prev = j > 0 ? bucket.rows[j - 1] : null;
         var y = yOf(row, prev, state.metric);
         if (y === null) continue; // daily: first sample has no predecessor
-        data.push([xOf(row, state.mode), y]);
+        // log mode stores the transformed value; tooltips invert it back
+        data.push([xOf(row, state.mode), state.log ? signedLog(y) : y]);
       }
       var base = {
         name: repo,
@@ -241,9 +292,12 @@
   function fmtNumber(n) {
     n = Number(n);
     if (!isFinite(n)) return '-';
-    if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
-    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
-    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+    // magnitude decides the suffix, so negative deltas (-11290) compact like
+    // positive ones instead of printing the whole number
+    var a = Math.abs(n), s = n < 0 ? '-' : '';
+    if (a >= 1e9) return s + (a / 1e9).toFixed(1) + 'B';
+    if (a >= 1e6) return s + (a / 1e6).toFixed(1) + 'M';
+    if (a >= 1e3) return s + (a / 1e3).toFixed(1) + 'K';
     return String(Math.round(n * 100) / 100);
   }
 
@@ -267,6 +321,21 @@
       boundaryGap: false
     };
     var win = state.win || { start: domain[0], end: domain[1] };
+    var yRange = visibleYRange(state);
+    var yMain;
+    if (log) {
+      var tl = signedLog(Math.min(0, yRange.min));
+      var th = signedLog(Math.max(1, yRange.max));
+      var step = (th - tl) > 6 ? 2 : 1;
+      var minT = Math.floor(tl / step) * step;
+      var maxT = Math.ceil(th / step) * step;
+      if (maxT - minT < step * 2) maxT = minT + step * 2;
+      yMain = { type: 'value', min: minT, max: maxT, interval: step, axisLabel: { formatter: fmtLogTick } };
+    } else {
+      // no explicit min/max: let ECharts pick nice linear ticks (every log
+      // toggle is a full render, so no stale snapped range lingers)
+      yMain = { type: 'value' };
+    }
 
     return {
       animation: false,
@@ -297,13 +366,16 @@
       yAxis: [
         {
           gridIndex: 0,
-          type: log ? 'log' : 'value',
+          type: yMain.type,
+          min: yMain.min,
+          max: yMain.max,
+          interval: yMain.interval,
           name: (METRICS[state.metric] || {}).label || state.metric,
           nameLocation: 'middle',
           nameGap: 46,
           nameRotate: -90,
           nameTextStyle: { fontSize: 11, color: '#888' },
-          axisLabel: { color: '#666', formatter: function (v) { return fmtNumber(v); } },
+          axisLabel: { color: '#666', formatter: log ? fmtLogTick : function (v) { return fmtNumber(v); } },
           splitLine: { lineStyle: { color: '#f2f2f2' } }
         },
         { gridIndex: 1, axisLabel: { show: false }, axisLine: { show: false }, splitLine: { show: false }, axisTick: { show: false } }
@@ -318,7 +390,8 @@
           if (!ps.length) return '';
           var head = fmtWindowLabel(mode, ps[0].value[0]);
           var rows = ps.map(function (p) {
-            return { name: p.seriesName, v: p.value[1], color: p.color };
+            // log mode stores transformed values on the axis; show the real count
+            return { name: p.seriesName, v: log ? signedExp(p.value[1]) : p.value[1], color: p.color };
           }).filter(function (r) { return r.v !== null && r.v !== undefined && isFinite(r.v); })
             .sort(function (a, b) { return b.v - a.v; });
           var html = '<div style="font-size:12px">' + head + '</div>';
@@ -406,7 +479,9 @@
     mainSeries: mainSeries, contextSeries: contextSeries, buildOption: buildOption,
     pointCount: pointCount,
     fmtNumber: fmtNumber, fmtDate: fmtDate, fmtDateShort: fmtDateShort,
-    fmtDateISO: fmtDateISO, fmtWindowLabel: fmtWindowLabel
+    fmtDateISO: fmtDateISO, fmtWindowLabel: fmtWindowLabel,
+    signedLog: signedLog, signedExp: signedExp, snapDecade: snapDecade,
+    fmtLogTick: fmtLogTick, visibleYRange: visibleYRange
   };
 
   /* ------------------------------- UI ---------------------------------- */
@@ -462,11 +537,12 @@
       if (full) {
         chart.setOption(opt, { replaceMerge: ['series', 'xAxis', 'yAxis', 'dataZoom', 'grid'] });
       } else {
-        // series (+ y axis type) only: the dataZoom window is left untouched,
-        // which is what makes the range persist across metric/log changes.
+        // series + the built y axis (its fitted range lives there); the dataZoom
+        // window is left untouched, which is what makes the range persist across
+        // metric and log changes.
         chart.setOption({
           series: opt.series,
-          yAxis: [{ type: log ? 'log' : 'value' }, {}]
+          yAxis: [Object.assign({}, opt.yAxis[0]), {}]
         }, { replaceMerge: ['series'] });
       }
       syncRangeUI();
@@ -663,7 +739,11 @@
       metric = els.metricSelect.value;
       render(false);
     });
-    els.logScale.addEventListener('change', function () { log = els.logScale.checked; render(false); });
+    // Full render: a log toggle pins/unpins an explicit y range, and a merge
+    // patch cannot clear an explicit min/max (min:null does not reset it), so the
+    // axis must be rebuilt. state.win is the source of truth and buildOption
+    // re-applies it, so the selected range survives the toggle.
+    els.logScale.addEventListener('change', function () { log = els.logScale.checked; render(true); });
     els.alignTimeline.addEventListener('change', function () {
       switchMode(els.alignTimeline.checked ? 'index' : 'time');
     });

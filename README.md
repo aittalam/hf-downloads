@@ -114,7 +114,8 @@ JSONL instead.
 | `from` / `to` date fields | Exact calendar window; chips deselect when you customise |
 | Overview strip + slider | Strip below the chart shows the **full** timeline (total change per day); drag its window to zoom |
 | Wheel / shift-drag on the plot | Zoom and pan; the date fields follow the slider, so you always know what range you're looking at |
-| Metric dropdown | 30d downloads (bars), all-time (cumulative line), daily delta (bars, log scale on by default), likes |
+| Metric dropdown | 30d downloads (bars), all-time (cumulative line), daily delta (bars), likes |
+| Log scale checkbox | Signed-log y axis — works with zero and negative values (see below) |
 | Log scale / Align timeline | Align switches the x-axis to "days since that repo's first sample" and keeps its own window, in day units |
 | Repo chips + dropdown | Add/remove repos; colours are sticky, HF tags shown as dots |
 
@@ -122,12 +123,26 @@ The selected range **persists**: switching metric, toggling log scale, or adding
 never resets the zoom (time mode and align mode each remember their own window).
 
 The `points in window · days · repos` line reports how thin the data really is — a daily metric
-spread over months is noise-dominated, so narrow the range.
+spread over months is noise-dominated.
 
 Notes on the `daily` metric: it is the change of `downloads_all_time` between consecutive
 samples, so each repo's first sample is dropped, deltas can be negative (HF's 30-day counter
 uses a moving window), and samples closer than 0.25 days are not joined (two pulls within an
 hour shouldn't read as zero change).
+
+### Log scale and zero values
+
+Zero is common in this data, not an error: `likes` is 0 for most repos, and a repo sits at 0
+downloads until its first crawl (`mozilla-ai/encoderfile` has 85 zero days before it starts
+being counted). A plain log axis cannot show that: `log(0)` is −Infinity, so ECharts hands back
+`y = Infinity` for a zero point and `y = NaN` for a negative one — the point simply disappears,
+and clipping the value to 0 changes nothing because 0 is the un-placeable case.
+
+So the checkbox plots a **signed log** (`sign(v) · log10(1 + |v|)`) on a normal axis: 0 lands on
+the zero line, negative deltas point down, magnitudes stay compressed, and tick labels read as
+decades (0, 10, 100, 1K…). Tooltips always show the real count. It behaves like `symlog` in
+matplotlib — the near-zero region is linear, which is what you want when most of the series is
+literally zero.
 
 ### generate_synthetic.py
 

@@ -40,6 +40,15 @@ hf-downloads check meta-llama/Llama-2-7b-hf
     shift-drag pan). Read the window back from `getOption().dataZoom` and intersect the
     `startValue`/`endValue` of both entries — each component reports its own view, and the
     inside-zoom's is stale after an explicit `dispatchAction`.
+  - Log mode is a **signed-log transform on a `type: 'value'` axis**, never `type: 'log'`.
+    ECharts returns `y = Infinity` for value 0 and `y = NaN` for a negative on a log axis
+    (measured on 5.6.0), and zeros are pervasive in this data (`likes` mostly 0; repos sit at 0
+    downloads until their first crawl — `encoderfile` has 85 zero days). Clipping non-positive
+    values to 0 cannot fix it: 0 *is* the un-placeable case. `Core.signedLog/signedExp` are
+    exact inverses; tooltips invert back to real counts, tick labels snap to decades.
+  - Because log mode pins an explicit y `min/max`, toggling it must be a **full render**
+    (`render(true)`): a merge patch cannot clear an explicit axis range (`min: null` does not
+    reset it). Persistence across that toggle comes from `state.win` being re-applied.
   - ECharts action types are case-sensitive and events are lowercased: dispatching
     `{ type: 'datazoom' }` is a **silent no-op** (the action table is keyed by `dataZoom`), while
     listening must use the lowercase event `chart.on('datazoom')`. Getting either wrong produces
