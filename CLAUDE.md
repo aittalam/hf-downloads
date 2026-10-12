@@ -40,6 +40,14 @@ hf-downloads check meta-llama/Llama-2-7b-hf
     shift-drag pan). Read the window back from `getOption().dataZoom` and intersect the
     `startValue`/`endValue` of both entries — each component reports its own view, and the
     inside-zoom's is stale after an explicit `dispatchAction`.
+  - ECharts action types are case-sensitive and events are lowercased: dispatching
+    `{ type: 'datazoom' }` is a **silent no-op** (the action table is keyed by `dataZoom`), while
+    listening must use the lowercase event `chart.on('datazoom')`. Getting either wrong produces
+    "controls do nothing" with no error. The live suite (`viewer-live.mjs`, real ECharts in
+    jsdom) is the one that catches this class of bug.
+  - `bar` series make ECharts pad a `type: 'time'` axis by ~half a data interval on each side
+    (room so edge bars aren't clipped). The overview axis is line-only and stays exact, so strip
+    content and slider handles differ by ~2px at the extremes - expected, not a bug.
   - x-space is real timestamps (`time` mode) or days-since-that-repo's-first-sample
     (`align` mode); each mode remembers its own window. Axes are pinned to the whole-domain
     extent so the overview strip and the slider track stay pixel-aligned at any zoom level;

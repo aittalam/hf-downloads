@@ -477,7 +477,10 @@
       var w = Core.clampWindow(mode, domain, start, end);
       win = w;
       savedRange[mode] = { start: w.start, end: w.end };
-      if (chart) chart.dispatchAction({ type: 'datazoom', startValue: w.start, endValue: w.end });
+      // Exact case matters: ECharts keys its action table by action type
+      // ('dataZoom') while the emitted *event* is lowercased ('datazoom').
+      // A lowercase dispatch is silently ignored (core/echarts.js registerAction).
+      if (chart) chart.dispatchAction({ type: 'dataZoom', startValue: w.start, endValue: w.end });
       syncRangeUI();
     }
 
@@ -527,9 +530,8 @@
       var st = state();
       var pts = Core.pointCount(st, win);
       var days = Math.max(1, Math.round((win.end - win.start) / DAY));
-      var dense = pts > 320 ? ' · dense, try a narrower range' : '';
       els.rangeInfo.textContent = pts + ' points in window · ' + days + ' days' +
-        ' · ' + selected.length + ' repos' + dense;
+        ' · ' + selected.length + ' repos';
 
       var chips = els.presets.querySelectorAll('.preset');
       for (var i = 0; i < chips.length; i++) {
@@ -643,8 +645,8 @@
       }
       els.instructions.style.display = 'none';
       render(true);
-      els.rangeHint.style.display = '';
-      if (parsed.bad) els.rangeHint.textContent = 'hint · ' + parsed.bad + ' unparseable line(s) skipped. ' + els.rangeHint.dataset.text;
+      els.rangeHint.style.display = parsed.bad ? '' : 'none';
+      els.rangeHint.textContent = parsed.bad ? parsed.bad + ' unparseable line(s) skipped' : '';
     }
 
     /* --- events -------------------------------------------------------- */
